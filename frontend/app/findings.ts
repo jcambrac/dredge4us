@@ -81,9 +81,27 @@ export function apiBase(): string {
   return base;
 }
 
-// getFindings calls the poller's read-only API server-side. API_BASE_URL
-// is not NEXT_PUBLIC_-prefixed on purpose — the browser never talks to
-// that API directly. board/kind are omitted to mean "no filter".
+function apiToken(): string {
+  const token = process.env.API_AUTH_TOKEN;
+  if (!token) {
+    throw new Error("API_AUTH_TOKEN is not set");
+  }
+  return token;
+}
+
+// apiFetch calls the poller's API server-side, with the bearer token
+// every route requires (see server/internal/api's withAuth).
+// API_BASE_URL/API_AUTH_TOKEN are not NEXT_PUBLIC_-prefixed on purpose —
+// the browser never talks to that API directly.
+export function apiFetch(path: string): Promise<Response> {
+  return fetch(`${apiBase()}${path}`, {
+    cache: "no-store",
+    headers: { Authorization: `Bearer ${apiToken()}` },
+  });
+}
+
+// getFindings calls the poller's read-only API server-side. board/kind
+// are omitted to mean "no filter".
 export async function getFindings(board?: string, kind?: string): Promise<Finding[]> {
   const params = new URLSearchParams({ limit: "100" });
   if (board) {
@@ -93,7 +111,7 @@ export async function getFindings(board?: string, kind?: string): Promise<Findin
     params.set("kind", kind);
   }
 
-  const res = await fetch(`${apiBase()}/findings?${params}`, { cache: "no-store" });
+  const res = await apiFetch(`/findings?${params}`);
   if (!res.ok) {
     throw new Error(`findings request failed: ${res.status}`);
   }
@@ -103,7 +121,7 @@ export async function getFindings(board?: string, kind?: string): Promise<Findin
 
 // getBoards returns the boards currently watched by the poller.
 export async function getBoards(): Promise<string[]> {
-  const res = await fetch(`${apiBase()}/boards`, { cache: "no-store" });
+  const res = await apiFetch("/boards");
   if (!res.ok) {
     throw new Error(`boards request failed: ${res.status}`);
   }
@@ -121,7 +139,7 @@ export type BoardStatus = {
 // with whether this poller watches it — unlike getBoards, which only
 // lists the watched ones.
 export async function getAllBoards(): Promise<BoardStatus[]> {
-  const res = await fetch(`${apiBase()}/boards/all`, { cache: "no-store" });
+  const res = await apiFetch("/boards/all");
   if (!res.ok) {
     throw new Error(`all-boards request failed: ${res.status}`);
   }
@@ -139,7 +157,7 @@ export async function getKinds(board?: string): Promise<string[]> {
     params.set("board", board);
   }
 
-  const res = await fetch(`${apiBase()}/kinds?${params}`, { cache: "no-store" });
+  const res = await apiFetch(`/kinds?${params}`);
   if (!res.ok) {
     throw new Error(`kinds request failed: ${res.status}`);
   }
@@ -165,9 +183,7 @@ export type GeneralLineage = {
 // getGenerals returns the general-thread lineages tracked for board —
 // see lib/general on the Go side for the detection/stitching heuristic.
 export async function getGenerals(board: string): Promise<GeneralLineage[]> {
-  const res = await fetch(`${apiBase()}/generals?board=${encodeURIComponent(board)}`, {
-    cache: "no-store",
-  });
+  const res = await apiFetch(`/generals?board=${encodeURIComponent(board)}`);
   if (!res.ok) {
     throw new Error(`generals request failed: ${res.status}`);
   }
@@ -196,7 +212,7 @@ export async function getSummary(board?: string): Promise<SummaryWindow[]> {
     params.set("board", board);
   }
 
-  const res = await fetch(`${apiBase()}/summary?${params}`, { cache: "no-store" });
+  const res = await apiFetch(`/summary?${params}`);
   if (!res.ok) {
     throw new Error(`summary request failed: ${res.status}`);
   }
@@ -218,7 +234,7 @@ export type NarrativeSummary = {
 // covers all boards combined (see server/cmd/summarizer). Can return
 // fewer than 3 entries if a window hasn't generated yet.
 export async function getNarrativeSummaries(): Promise<NarrativeSummary[]> {
-  const res = await fetch(`${apiBase()}/summary/narrative`, { cache: "no-store" });
+  const res = await apiFetch("/summary/narrative");
   if (!res.ok) {
     throw new Error(`narrative summary request failed: ${res.status}`);
   }

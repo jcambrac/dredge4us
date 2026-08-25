@@ -26,6 +26,14 @@ services:
       - key: DATABASE_URL
         type: SECRET
         value: "EDIT_ME_IN_DO_CONSOLE"
+      - key: API_AUTH_TOKEN
+        type: SECRET
+        # Bearer token every /findings, /boards, /coverage, /generals,
+        # /kinds, /summary, and /debug/* request must present as
+        # "Authorization: Bearer <value>" (server/internal/api's
+        # withAuth). Same value goes in the frontend's API_AUTH_TOKEN
+        # env var — see frontend/.env.example.
+        value: "EDIT_ME_IN_DO_CONSOLE"
 
 workers:
   - name: poller

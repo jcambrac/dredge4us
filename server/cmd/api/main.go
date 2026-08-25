@@ -37,6 +37,10 @@ func run() error {
 	if dbURL == "" {
 		return fmt.Errorf("DATABASE_URL is required")
 	}
+	token := os.Getenv("API_AUTH_TOKEN")
+	if token == "" {
+		return fmt.Errorf("API_AUTH_TOKEN is required")
+	}
 	addr := os.Getenv("API_ADDR")
 	if addr == "" {
 		addr = ":8080"
@@ -84,7 +88,7 @@ func run() error {
 		slog.Info("llm classification enabled for backfill", "model", model)
 	}
 
-	srv := &http.Server{Addr: addr, Handler: api.New(pg, pg, fc, backfillBoards, detectors)}
+	srv := &http.Server{Addr: addr, Handler: api.New(pg, pg, fc, backfillBoards, detectors, token)}
 
 	go func() {
 		<-ctx.Done()

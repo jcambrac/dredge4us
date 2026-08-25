@@ -1,16 +1,20 @@
-// Package api implements the poller's read-only HTTP API: a single
-// endpoint serving recent findings as JSON. Assumed caller is a trusted
-// server-side process (e.g. a Next.js route handler), not a browser
-// directly — there's no CORS or auth here yet.
+// Package api implements the poller's HTTP API: findings and the
+// board/coverage/summary views built on top of them, as JSON. Assumed
+// caller is a trusted server-side process (e.g. a Next.js route
+// handler) or another app — not a browser directly, there's still no
+// CORS. Every route requires a bearer token (see withAuth); there's no
+// per-consumer scoping, just the one shared secret.
 package api
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -63,8 +67,9 @@ type BackfillBoard struct {
 // New builds the API's HTTP handler. fc serves the /boards/all board
 // index — the only route that talks to 4chan directly instead of Store.
 // backfillBoards/detectors feed /debug/backfill and /debug/classify;
-// pass nil/empty to disable both.
-func New(finder Finder, debugStore DebugStore, fc *fourchan.Client, backfillBoards []BackfillBoard, detectors []detect.Detector) http.Handler {
+// pass nil/empty to disable both. token is required and gates every
+// route via withAuth — see New's callers for where it comes from.
+func New(finder Finder, debugStore DebugStore, fc *fourchan.Client, backfillBoards []BackfillBoard, detectors []detect.Detector, token string) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /findings", findingsHandler(finder))
 	mux.HandleFunc("GET /findings/{id}/context", findingContextHandler(finder))
@@ -88,7 +93,26 @@ func New(finder Finder, debugStore DebugStore, fc *fourchan.Client, backfillBoar
 	// Re-runnable any time, against detectors added since. Remove when
 	// backfilling is done.
 	mux.HandleFunc("GET /debug/classify", classifyHandler(debugStore, detectors))
-	return withLogging(mux)
+	return withLogging(withAuth(token, mux))
+}
+
+// withAuth requires "Authorization: Bearer <token>" on every request,
+// including /debug/*: those trigger real work (archive pulls, billed
+// LLM calls) and are more dangerous unauthenticated than the read
+// routes, not less. token must be non-empty — New's callers own that
+// invariant, there's no "auth disabled" mode.
+func withAuth(token string, next http.Handler) http.Handler {
+	if token == "" {
+		panic("api: withAuth called with an empty token")
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+		if !ok || subtle.ConstantTimeCompare([]byte(got), []byte(token)) != 1 {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func archiveCheckHandler() http.HandlerFunc {

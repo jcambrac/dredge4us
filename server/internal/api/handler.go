@@ -1,5 +1,6 @@
 // Package api implements the poller's HTTP API: findings and the
-// board/coverage/summary views built on top of them, as JSON. Assumed
+// board/coverage/summary views built on top of them, plus the raw post
+// feed other services pull from (/raw-posts), as JSON. Assumed
 // caller is a trusted server-side process (e.g. a Next.js route
 // handler) or another app — not a browser directly, there's still no
 // CORS. Every route requires a bearer token (see withAuth); there's no
@@ -38,14 +39,13 @@ type Finder interface {
 	Summary(ctx context.Context, board string) ([]store.SummaryWindow, error)
 	LatestNarrativeSummaries(ctx context.Context) ([]store.NarrativeSummary, error)
 	CoverageStats(ctx context.Context, boards []string) ([]store.BoardCoverageStats, error)
+	ListRawPosts(ctx context.Context, q store.RawPostsQuery) ([]store.RawPost, error)
 }
 
 var _ Finder = (*store.Postgres)(nil)
 
 // DebugStore is the write/read surface the backfill and classify
-// handlers need, beyond Finder's read-only routes. Reversing findings'
-// "no post text" boundary (see migrations/0005_raw_posts.sql) is
-// confined to these two TEMP routes — every other route is unaffected.
+// handlers need, beyond Finder's read-only routes.
 type DebugStore interface {
 	SaveRawPosts(ctx context.Context, posts []store.RawPost) error
 	UnclassifiedRawPosts(ctx context.Context, board string) ([]store.RawPost, error)
@@ -80,6 +80,7 @@ func New(finder Finder, debugStore DebugStore, fc *fourchan.Client, backfillBoar
 	mux.HandleFunc("GET /kinds", kindsHandler(finder))
 	mux.HandleFunc("GET /summary", summaryHandler(finder))
 	mux.HandleFunc("GET /summary/narrative", narrativeSummaryHandler(finder))
+	mux.HandleFunc("GET /raw-posts", rawPostsHandler(finder))
 	// TEMP: verifies desuarchive/palanq are reachable (not Cloudflare-
 	// challenged) from this app's real DO egress, vs. the phone hotspot
 	// docs/archive-sources.md was drafted against. Remove once checked.
@@ -484,15 +485,19 @@ func findingContextHandler(finder Finder) http.HandlerFunc {
 }
 
 func parseLimit(raw string) int {
+	return parseLimitWith(raw, defaultLimit, maxLimit)
+}
+
+func parseLimitWith(raw string, def, ceiling int) int {
 	if raw == "" {
-		return defaultLimit
+		return def
 	}
 	n, err := strconv.Atoi(raw)
 	if err != nil || n <= 0 {
-		return defaultLimit
+		return def
 	}
-	if n > maxLimit {
-		return maxLimit
+	if n > ceiling {
+		return ceiling
 	}
 	return n
 }

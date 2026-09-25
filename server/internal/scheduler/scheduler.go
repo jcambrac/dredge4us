@@ -22,7 +22,16 @@ import (
 	"github.com/jcl80/dredge4us/lib/general"
 	libstore "github.com/jcl80/dredge4us/lib/store"
 	"github.com/jcl80/dredge4us/server/internal/config"
+	pgstore "github.com/jcl80/dredge4us/server/internal/store"
 )
+
+// RawPostSaver persists every fetched post's full text. Declared here
+// rather than on lib/store.Store because raw posts are a server concern
+// — lib's Store is the persistence boundary lib's own packages need,
+// and none of them need this.
+type RawPostSaver interface {
+	SaveRawPosts(ctx context.Context, posts []pgstore.RawPost) error
+}
 
 // Scheduler runs one poll loop per watched board.
 type Scheduler struct {
@@ -32,8 +41,12 @@ type Scheduler struct {
 	// matching lib/foolfuuka.Client. A board whose Source has no entry
 	// here is a wiring bug (config accepted a source that Sources never
 	// got built for) and is skipped with a loud log rather than started.
-	Sources   map[string]fourchan.Source
-	Store     libstore.Store
+	Sources map[string]fourchan.Source
+	Store   libstore.Store
+	// RawPosts, when non-nil, receives every post of every thread
+	// fetched, so consumers can pull full text via the API's /raw-posts.
+	// nil keeps posts on the call stack only, as before.
+	RawPosts  RawPostSaver
 	Detectors []detect.Detector
 	Boards    []config.Board
 	Workers   int
@@ -242,8 +255,10 @@ func (s *Scheduler) fetchAndDetect(ctx context.Context, b config.Board, client f
 	return findings
 }
 
-// fetchOneThread fetches and scans a single thread. Posts are held only
-// on this call stack — they're discarded the moment Detect returns.
+// fetchOneThread fetches, stores (if s.RawPosts is set), and scans a
+// single thread. A changed thread is re-fetched in full, so most of its
+// posts are already stored — SaveRawPosts skips those on (board,
+// post_no).
 func (s *Scheduler) fetchOneThread(ctx context.Context, b config.Board, client fourchan.Source, t fourchan.Thread) (findings []detect.Finding, requests, notModified, postsSeen int, errored bool) {
 	board := b.Name
 	url := threadURL(b.Source, board, t.No)
@@ -271,11 +286,38 @@ func (s *Scheduler) fetchOneThread(ctx context.Context, b config.Board, client f
 		slog.Error("persist thread last-modified failed", "board", board, "thread", t.No, "error", err)
 	}
 
+	if s.RawPosts != nil {
+		if err := s.RawPosts.SaveRawPosts(ctx, toRawPosts(b, t.No, posts)); err != nil {
+			slog.Error("save raw posts failed", "board", board, "thread", t.No, "error", err)
+			errored = true
+		}
+	}
+
 	for _, d := range s.Detectors {
 		findings = append(findings, d.Detect(board, t, posts)...)
 	}
 
-	return findings, requests, 0, len(posts), false
+	return findings, requests, 0, len(posts), errored
+}
+
+func toRawPosts(b config.Board, threadNo int, posts []fourchan.Post) []pgstore.RawPost {
+	source := sourceBase(b.Source)
+	out := make([]pgstore.RawPost, 0, len(posts))
+	for _, p := range posts {
+		out = append(out, pgstore.RawPost{
+			Board:    b.Name,
+			Source:   source,
+			ThreadNo: threadNo,
+			PostNo:   p.No,
+			PostTime: p.PostTime(),
+			Sub:      p.Sub,
+			Com:      p.Com,
+			Sticky:   p.Sticky != 0,
+			Closed:   p.Closed != 0,
+			Archived: p.Archived != 0,
+		})
+	}
+	return out
 }
 
 func (s *Scheduler) finishCycle(ctx context.Context, stats libstore.PollCycle) {

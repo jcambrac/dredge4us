@@ -69,6 +69,7 @@ func run() error {
 	sched := &scheduler.Scheduler{
 		Sources:   sources,
 		Store:     pg,
+		RawPosts:  pg,
 		Detectors: detectors,
 		Boards:    cfg.Boards,
 		Workers:   cfg.Workers,

@@ -1,6 +1,6 @@
 SHELL := /bin/bash
 
-.PHONY: lint build-api build-poller build-summarizer docker-build-api docker-build-poller docker-build-summarizer run-api run-poller run-summarizer run-frontend
+.PHONY: lint build-api build-poller build-summarizer docker-build-api docker-build-poller docker-build-summarizer run-api run-poller run-summarizer run-frontend cert deploy ps logs down
 
 lint:
 	@fail=0; \
@@ -40,6 +40,27 @@ docker-build-poller:
 
 docker-build-summarizer:
 	docker build -f Dockerfile.summarizer -t dredge4us-summarizer .
+
+# Production lives on the reddit-monitoring droplet, checked out at
+# ~/Projects/dredge4us — run these there. See deploy/docker-compose.yml.
+COMPOSE := docker compose --env-file .env -f deploy/docker-compose.yml
+
+# First time only: issue the Let's Encrypt cert nginx needs to start.
+cert:
+	./deploy/init-cert.sh
+
+deploy:
+	git pull --ff-only
+	$(COMPOSE) up -d --build --remove-orphans
+
+ps:
+	$(COMPOSE) ps
+
+logs:
+	$(COMPOSE) logs -f --tail=100
+
+down:
+	$(COMPOSE) down
 
 # Deploys happen by pushing to main — see .do/app.yaml. The app itself is
 # created once through the App Platform console (New App > GitHub repo >

@@ -1,7 +1,3 @@
-# SUPERSEDED: production moved to the reddit-monitoring droplet — see
-# deploy/docker-compose.yml. Kept only until the App Platform app is
-# deleted in the DO console; remove this file then.
-#
 # DigitalOcean App Platform spec for server/cmd/api. Documents the
 # config to enter in the App Platform console (New App > GitHub repo >
 # Dockerfile) when creating the app the first time. deploy_on_push below
